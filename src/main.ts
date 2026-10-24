@@ -9,6 +9,7 @@ import { AUTH_PROTOCOL_ACTION, WebAuthService } from "./auth/WebAuthService";
 import { PluginManager } from "./plugins/PluginManager";
 import { TogetherSettingTab } from "./settings/SettingsTab";
 import { applyCoreLegacyMigration } from "./settings-migration";
+import { disableLegacyPlugins, type PluginRegistry } from "./legacy-plugins";
 import { WelcomeModal } from "./onboarding/WelcomeModal";
 import { shouldShowWelcome, needsFirstSetup, loginLinkAction, isLoginLink } from "./onboarding/first-run";
 
@@ -42,6 +43,8 @@ export default class HubFolksPlugin extends Plugin {
   private registeredExtensions = new Map<string, unknown>();
   private traceConfig = new Map<string, TraceLevel>();
   private debugModeActive = false;
+  /** Startup load of the sub-plugins (never rejects). */
+  private startupLoad: Promise<void> = Promise.resolve();
 
   async onload(): Promise<void> {
     // Start capturing immediately so window.onerror and console.* are live
@@ -52,6 +55,9 @@ export default class HubFolksPlugin extends Plugin {
     await this.loadSettings();
 
     this.logger = new Logger("hubfolks", () => this.getTraceLevel("hubfolks"));
+
+    // A legacy core loaded before us: stop it before our sub-plugins start.
+    await this.disableLegacyCores();
 
     this.authManager = new AuthManager(() => this.settings);
     this.webAuth = new WebAuthService({
@@ -224,12 +230,13 @@ export default class HubFolksPlugin extends Plugin {
 
     // On startup, ensure plugins are loaded from disk even when not logged in
     // (community must always run so it can display the login screen).
-    void this.pluginManager.ensurePluginsLoaded()
-      .then(() => this.eventBus.emit('community:plugins-refreshed'))
+    this.startupLoad = this.pluginManager.ensurePluginsLoaded()
+      .then(() => { this.eventBus.emit('community:plugins-refreshed'); })
       .catch((e) => this.logger.error('PluginManager startup load failed:', e));
 
     // Load trace config once vault is ready, then watch for user note changes
     this.app.workspace.onLayoutReady(() => {
+      void this.disableLegacyCoresLoadedAfterUs();
       if (shouldShowWelcome(this.settings)) this.openWelcome();
       const hasDebugFile = this.app.vault.getFiles()
         .some(f => f.path.toLowerCase() === "debug.md");
@@ -250,6 +257,38 @@ export default class HubFolksPlugin extends Plugin {
     });
 
     this.logger.info("loaded (v" + this.manifest.version + ")");
+  }
+
+  /** Disables the replaced "obsidian-together" core when it is enabled or still running in this
+   *  vault: its own copy of community would sync the vault a second time. Returns the IDs disabled. */
+  private async disableLegacyCores(): Promise<string[]> {
+    const registry = (this.app as any).plugins as PluginRegistry | undefined;
+    if (!registry) return [];
+    const disabled = await disableLegacyPlugins(registry, this.manifest.id);
+    if (disabled.length > 0) {
+      this.logger.warn(`disabled legacy plugin(s): ${disabled.join(", ")}`);
+      new Notice(
+        "HubFolks replaces the \"Obsidian Together\" plugin, which was still running and syncing this vault a second time. " +
+        "It has been disabled — you can uninstall it in Settings → Community plugins.",
+        0,
+      );
+    }
+    return disabled;
+  }
+
+  /** A legacy core loaded after us took over app.together and may hold view types and the sync
+   *  lock: once it is gone, restore our API and restart our sub-plugins. */
+  private async disableLegacyCoresLoadedAfterUs(): Promise<void> {
+    try {
+      if ((await this.disableLegacyCores()).length === 0) return;
+      this.app.together = this.togetherAPI;
+      // Reloading while the startup load is still running would instantiate a sub-plugin twice.
+      await this.startupLoad;
+      await this.pluginManager.reloadAll();
+      this.eventBus.emit("community:plugins-refreshed");
+    } catch (e) {
+      this.logger.error("disabling legacy plugins failed:", e);
+    }
   }
 
   /** Opens the welcome sign-in window; never two at once. */
