@@ -11,6 +11,8 @@ export interface PluginManagerOptions {
   getAuth: () => AuthState;
   onPluginLoaded?: (id: string, instance: unknown) => void;
   logger: Logger;
+  /** Node fs, injectable for tests; defaults to require('fs') on desktop. */
+  fs?: typeof import('fs');
 }
 
 export function parseVersion(v: string): { major: number; minor: number; build: number } | null {
@@ -595,6 +597,18 @@ export class PluginManager {
     return this.opts.app.vault.adapter.exists(bundlePath);
   }
 
+  /** True when a vault path is a symlink. Desktop only: mobile vaults have no symlinks and no Node fs. */
+  private _isSymlink(vaultPath: string): boolean {
+    const adapter = this.opts.app?.vault?.adapter as { getFullPath?: (p: string) => string } | undefined;
+    if (Platform.isMobile || typeof adapter?.getFullPath !== 'function') return false;
+    try {
+      const fs = this.opts.fs ?? (require('fs') as typeof import('fs'));
+      return fs.lstatSync(adapter.getFullPath(vaultPath)).isSymbolicLink();
+    } catch {
+      return false;
+    }
+  }
+
   private _subPluginsDir(): string {
     // vault-relative path — works on both desktop and mobile via vault.adapter
     return '.obsidian/plugins/hubfolks/sub-plugins';
@@ -652,14 +666,22 @@ export class PluginManager {
     const adapter = this.opts.app?.vault?.adapter;
     if (!adapter) return;
 
-    // Sub-plugin folder cleanup — skipped in devMode (dev repo source files must not be deleted)
-    if (!settings.devMode) {
-      const dir = this._subPluginsDir();
+    // Sub-plugin folder cleanup — skipped in devMode (dev repo source files must not be deleted).
+    // Dev vaults may also link sub-plugins/ to the repo's apps/ without devMode: never delete through a
+    // symlink, and only delete folders this manager installed (downloadPlugin writes main.version).
+    const dir = this._subPluginsDir();
+    if (!settings.devMode && this._isSymlink(dir)) {
+      this.logger.warn(`[PluginManager] cleanupObsoletePlugins skipped: ${dir} is a symlink`);
+    } else if (!settings.devMode) {
       if (await adapter.exists(dir)) {
         const { folders } = await adapter.list(dir);
         for (const folderPath of folders) {
           const id = folderPath.split('/').pop()!;
           if (!id || serverIds.has(id)) continue;
+          if (!(await adapter.exists(this._versionPath(id))) || this._isSymlink(folderPath)) {
+            this.logger.warn(`[PluginManager] cleanupObsoletePlugins kept ${id}: not installed by the plugin manager`);
+            continue;
+          }
           this.logger.verbose(`[PluginManager] cleanupObsoletePlugins removing sub-plugin: ${id}`);
           await this.unloadPlugin(id);
           try { await (adapter as any).rmdir(folderPath, true); } catch (e) { this.logger.warn(`[PluginManager] cleanup failed to delete ${id}:`, e); }
