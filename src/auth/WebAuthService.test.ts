@@ -21,7 +21,7 @@ function res(status: number, body: unknown = {}): Response {
 
 type Handler = (body: any) => Response | Promise<Response>;
 
-function setup(routes: { poll?: Handler; token?: Handler; capabilities?: () => Response | Promise<Response> } = {}) {
+function setup(routes: { poll?: Handler; token?: Handler; capabilities?: () => Response | Promise<Response> } = {}, client?: "hubfolks") {
   const settings = {
     accounts: [{ username: "alice", serverUrl: SERVER, userId: "u1", token: "old-jwt", refreshToken: "rt-1" }],
     activeAccountIndex: 0,
@@ -46,6 +46,7 @@ function setup(routes: { poll?: Handler; token?: Handler; capabilities?: () => R
     emit,
     openUrl,
     vaultName: "My Vault",
+    client,
     fetch: fetchMock as unknown as typeof fetch,
   });
   return { service, settings, storeSession, fetchMock, emit, saveSettings, openUrl };
@@ -85,6 +86,16 @@ describe("WebAuthService", () => {
     expect(t.emit).toHaveBeenCalledWith("together:account-switched", { username: "dana", serverUrl: SERVER });
     expect(t.settings.accounts[1].encryptedPassword).toBeUndefined();
     expect(t.settings.activeAccountIndex).toBe(1);
+  });
+
+  it("tags the state with the client when running in the HubFolks app", async () => {
+    const t = setup({}, "hubfolks");
+    const done = t.service.start("signin", SERVER);
+    done.catch(() => {});
+    const state = JSON.parse(Buffer.from(stateOf(await waitForOpen(t.openUrl)), "base64url").toString());
+    expect(state.c).toBe("hubfolks");
+    t.service.cancel();
+    await expect(done).rejects.toThrow("Cancelled");
   });
 
   it("opens the sign-up page in signup mode", async () => {

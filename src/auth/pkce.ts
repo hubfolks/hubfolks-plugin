@@ -18,7 +18,8 @@ export async function deriveCodeChallenge(verifier: string): Promise<string> {
   return base64url(new Uint8Array(hash));
 }
 
-/** `state` carries a nonce plus the vault name, so the web page's deep link reopens the right vault. */
-export function encodeState(nonce: string, vaultName: string): string {
-  return base64url(new TextEncoder().encode(JSON.stringify({ n: nonce, v: vaultName })));
+/** `state` carries a nonce plus the vault name (and `c` when running in the HubFolks app), so the web page's deep link reopens the right vault. */
+export function encodeState(nonce: string, vaultName: string, client?: "hubfolks"): string {
+  const payload = client ? { n: nonce, v: vaultName, c: client } : { n: nonce, v: vaultName };
+  return base64url(new TextEncoder().encode(JSON.stringify(payload)));
 }

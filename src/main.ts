@@ -67,6 +67,7 @@ export default class HubFolksPlugin extends Plugin {
       emit: (event, payload) => this.eventBus.emit(event, payload),
       openUrl: (url) => { window.open(url); },
       vaultName: this.app.vault.getName(),
+      client: (this.app as { hubfolksHost?: unknown }).hubfolksHost ? "hubfolks" : undefined,
     });
     this.registerObsidianProtocolHandler(AUTH_PROTOCOL_ACTION, (params) =>
       void this.webAuth.handleCallback({ code: params.code, state: params.state, error: params.error }));

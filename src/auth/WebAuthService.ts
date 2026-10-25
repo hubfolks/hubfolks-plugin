@@ -21,6 +21,8 @@ export interface WebAuthDeps {
   emit(event: string, payload: unknown): void;
   openUrl(url: string): void;
   vaultName: string;
+  /** Set when the core runs inside the HubFolks app: the web page then skips the Obsidian deep link. */
+  client?: "hubfolks";
   fetch?: typeof fetch;
   now?: () => number;
 }
@@ -98,7 +100,7 @@ export class WebAuthService {
     if (generation !== this.generation) throw new Error("Cancelled");
 
     const nonce = base64url(crypto.getRandomValues(new Uint8Array(16)));
-    const state = encodeState(nonce, this.deps.vaultName);
+    const state = encodeState(nonce, this.deps.vaultName, this.deps.client);
     const serverExpiry = Date.parse(expiresAt);
     const maxExpiry = this.now() + FLOW_TTL_MS;
 
