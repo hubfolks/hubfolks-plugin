@@ -153,6 +153,8 @@ export default class HubFolksPlugin extends Plugin {
 
       cancelWebSignIn: (): void => this.webAuth.cancel(),
 
+      openWelcome: (): void => this.openWelcome(),
+
       createLogger: (pluginId: string) =>
         new Logger(pluginId, () => this.getTraceLevel(pluginId)),
 

@@ -81,6 +81,9 @@ export interface TogetherAPI {
   /** Abandons a pending `startWebSignIn`, which then rejects with "Cancelled".
    *  Optional so older versions of plugin-core don't break sub-plugins. */
   cancelWebSignIn?(): void;
+  /** Opens the first-run "Welcome to HubFolks" sign-in window (no-op if already open).
+   *  Optional so older versions of plugin-core don't break sub-plugins. */
+  openWelcome?(): void;
 }
 
 /** Session returned by `/auth/login`, `/auth/app/token` and an approved `/auth/app/poll`. */
